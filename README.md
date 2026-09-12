@@ -18,35 +18,58 @@ only the hook event name and opaque session and turn IDs. It does not inspect,
 store, or forward prompts, responses, transcripts, the working directory, the
 model name, or permission settings. It makes no network requests.
 
-The hook is optional. Codex will skip it until you review and trust its exact
-definition. Removing or disabling this plugin turns off the integration without
-affecting the watch's time, weather, theme synchronization, or pairing.
+The hooks are optional. Codex will skip them until you review and trust their
+exact definitions. Removing or disabling this plugin turns off the integration
+without affecting the watch's time, weather, theme synchronization, or pairing.
 
 ## Requirements
 
 - Omarchy Watch and its desktop bridge must already be installed and running.
-- Codex must support plugins and lifecycle hooks.
+- Codex CLI with plugin and lifecycle-hook support.
 
 ## Install
 
-After this repository's plugin files are published, add its Codex marketplace:
+Add the marketplace and install the plugin from your shell:
 
 ```bash
 codex plugin marketplace add iamjamesim/omarchy-watch-codex
+codex plugin add omarchy-watch-codex@omarchy-watch-codex
 ```
 
-Then open Codex, use `/plugins` to install **Omarchy Watch**, and use `/hooks`
-to inspect and trust the four lifecycle hooks.
+Start a new Codex CLI session, run `/hooks`, and inspect and trust the four
+lifecycle hooks. No hook runs before you approve its current definition.
 
 If an agent is helping with setup, it must explain the behavior above and ask
 for explicit human approval before adding the marketplace or installing the
 plugin. Mentioning the feature or installing the main Omarchy Watch plugin is
 not consent to install this integration.
 
+## Update
+
+Refresh the marketplace and reinstall the plugin, then start a new Codex CLI
+session. If a hook definition changed, `/hooks` will require a fresh review.
+
+```bash
+codex plugin marketplace upgrade omarchy-watch-codex
+codex plugin add omarchy-watch-codex@omarchy-watch-codex
+```
+
 ## Remove
 
-Disable or remove **Omarchy Watch** from `/plugins`. This plugin does not write
-to `~/.codex/hooks.json`, so no manual configuration cleanup is required.
+Uninstall the plugin:
+
+```bash
+codex plugin remove omarchy-watch-codex@omarchy-watch-codex
+```
+
+To stop tracking its marketplace as well, run:
+
+```bash
+codex plugin marketplace remove omarchy-watch-codex
+```
+
+This plugin does not write to `~/.codex/hooks.json`, so no manual configuration
+cleanup is required.
 
 ## License
 
