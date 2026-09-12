@@ -1,0 +1,20 @@
+{
+  "name": "omarchy-watch-codex",
+  "interface": {
+    "displayName": "Omarchy Watch Codex"
+  },
+  "plugins": [
+    {
+      "name": "omarchy-watch-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/omarchy-watch-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

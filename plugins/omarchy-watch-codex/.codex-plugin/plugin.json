@@ -1,0 +1,17 @@
+{
+  "name": "omarchy-watch-codex",
+  "version": "0.1.0",
+  "description": "Show Codex activity and completion alerts on Omarchy Watch.",
+  "author": {
+    "name": "James Im"
+  },
+  "interface": {
+    "displayName": "Omarchy Watch",
+    "shortDescription": "Show Codex activity on your Omarchy Watch.",
+    "longDescription": "Optional Codex lifecycle integration for the Omarchy Watch companion smartwatch.",
+    "developerName": "James Im",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Help me verify the optional Omarchy Watch Codex integration."
+  }
+}
