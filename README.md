@@ -29,7 +29,7 @@ affecting the watch's time, weather, theme synchronization, or pairing.
 
 ## Install
 
-This repository is not public yet. Once published, installation will be:
+After this repository's plugin files are published, add its Codex marketplace:
 
 ```bash
 codex plugin marketplace add iamjamesim/omarchy-watch-codex
