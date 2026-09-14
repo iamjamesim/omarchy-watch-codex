@@ -1,6 +1,6 @@
 {
   "name": "omarchy-watch-codex",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260914185127",
   "description": "Show Codex activity and completion alerts on Omarchy Watch.",
   "author": {
     "name": "James Im"

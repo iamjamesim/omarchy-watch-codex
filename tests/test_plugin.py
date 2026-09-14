@@ -115,13 +115,54 @@ class AdapterTests(unittest.TestCase):
         document = json.loads(HOOKS.read_text())
         self.assertEqual(
             set(document["hooks"]),
-            {"UserPromptSubmit", "Stop", "Interrupt", "SessionEnd"},
+            {"UserPromptSubmit", "Stop", "Interrupt", "SessionEnd",
+             "PreToolUse", "PostToolUse"},
         )
         for groups in document["hooks"].values():
             self.assertEqual(len(groups), 1)
             handlers = groups[0]["hooks"]
             self.assertEqual(len(handlers), 1)
             self.assertIn("$PLUGIN_ROOT", handlers[0]["command"])
+
+        for event in ("PreToolUse", "PostToolUse"):
+            self.assertEqual(document["hooks"][event][0]["matcher"],
+                             "^request_user_input$")
+
+    def test_question_and_answer_lifecycle(self):
+        for hook, expected in (("PreToolUse", "needs-input"),
+                               ("PostToolUse", "working")):
+            with self.subTest(hook=hook):
+                client, output = self.run_adapter({
+                    "hook_event_name": hook,
+                    "session_id": "session-1", "turn_id": "turn-2",
+                    "tool_name": "request_user_input",
+                    "tool_input": {"questions": "private question"},
+                    "tool_response": {"answers": "private answer"},
+                })
+                command = json.loads(client.sent)
+                self.assertEqual(command["event"], expected)
+                self.assertEqual(command["turn"], "turn-2")
+                self.assertEqual(set(command), {
+                    "command", "source", "session", "turn", "event", "timestamp",
+                })
+                self.assertEqual(output, "{}\n")
+
+    def test_unrelated_tools_and_async_questions_do_not_change_state(self):
+        for tool in ("Bash", "apply_patch", "request_user_input_async"):
+            for hook in ("PreToolUse", "PostToolUse"):
+                with self.subTest(tool=tool, hook=hook):
+                    client, output = self.run_adapter({
+                        "hook_event_name": hook, "tool_name": tool,
+                        "session_id": "session-1",
+                    })
+                    self.assertEqual(client.sent, b"")
+                    self.assertEqual(output, "{}\n")
+
+    def test_non_object_input_is_harmless(self):
+        for payload in (None, [], "invalid"):
+            client, output = self.run_adapter(payload)
+            self.assertEqual(client.sent, b"")
+            self.assertEqual(output, "{}\n")
 
 
 if __name__ == "__main__":

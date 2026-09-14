@@ -25,7 +25,17 @@ def socket_path() -> Path:
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
+        if not isinstance(payload, dict):
+            print("{}")
+            return
         event = EVENTS.get(str(payload.get("hook_event_name", "")))
+        # Match only the blocking question tool. Async questions return before
+        # the answer arrives, so their PostToolUse is not a resume signal.
+        if payload.get("tool_name") == "request_user_input":
+            event = {
+                "PreToolUse": "needs-input",
+                "PostToolUse": "working",
+            }.get(payload.get("hook_event_name"), event)
         session = str(payload.get("session_id", ""))
         if event and session:
             command = {
