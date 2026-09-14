@@ -1,86 +1,88 @@
 # Omarchy Watch for Codex
 
-Optional Codex activity indicators and completion alerts for
+Optional Codex activity and input alerts for
 [Omarchy Watch](https://github.com/iamjamesim/omarchy-watch).
+Install this companion separately from the watch's desktop plugin.
 
-This integration is separate from the Omarchy Watch desktop plugin. Installing
-Omarchy Watch does not install, enable, or modify Codex hooks.
+## Behavior
 
-## What opting in does
+| Codex activity | Watch state |
+| --- | --- |
+| You submit a prompt | Working |
+| A blocking `request_user_input` question or tool approval request opens | Needs input |
+| You answer the question, or the approved tool finishes | Working, once no tracked requests remain |
+| The turn ends | Done |
+| You interrupt or close the session | That session's activity is removed |
 
-When you install this Codex plugin and trust its hooks, Codex runs the bundled
-local adapter for `UserPromptSubmit`, `Stop`, `Interrupt`, and `SessionEnd`,
-plus `PreToolUse`, `PermissionRequest`, and `PostToolUse`.
-The adapter sends working, needs-input, completed, interrupted, and ended state to the
-Omarchy Watch bridge over its local Unix socket.
+Async questions and questions written only in chat do not trigger needs-input.
+Done means the turn ended, not necessarily that the whole task is complete.
+The plugin never approves, denies, or answers requests.
 
-A blocking structured question or permission request marks the agent as needing
-input. Returning from the question or finishing the approved tool restores working
-once no tracked requests remain. Finishing the turn remains a separate completed
-state. Asynchronous questions and questions written only in prose do not produce
-needs-input; ordinary turn completion still produces the done alert. No hook
-approves, denies, or answers anything for you.
-
-Codex does not expose a permission-resolved hook. Attention therefore remains
-while an approved command runs. A denied request without a tool-completion event
-clears on turn completion, interruption, session end, or the next user prompt.
-PermissionRequest does not document a call ID: overlapping calls of the same tool
-are conservatively held until all candidate calls finish. If the corresponding
-PreToolUse hook is unavailable, attention clears at the next lifecycle event.
-
-Codex supplies its standard hook payload to the adapter. The adapter accesses
-only the hook event name, tool name, and opaque session, turn, and tool-call IDs.
-It keeps temporary call-tracking files under
-`$XDG_RUNTIME_DIR/omarchy-watch-codex` (fallback `/run/user/<uid>`), with private
-directory/file permissions. Lifecycle events clear the tracked calls; small lock
-files remain until the runtime directory is cleared. It does not inspect, store,
-or forward prompts, command arguments, responses, transcripts, the working
-directory, the model name, or permission settings. It makes no network requests.
-
-The hooks are optional. Codex will skip them until you review and trust their
-exact definitions. Removing or disabling this plugin turns off the integration
-without affecting the watch's time, weather, theme synchronization, or pairing.
+Approval attention lasts until the tool finishes. If denial produces no tool
+result, it clears when the turn ends, is interrupted, the session closes, or you
+submit another prompt. Overlapping calls of the same tool can keep attention
+active longer; a request with no tracked call stays active until a lifecycle
+cleanup event. These are limitations of matching permission requests to calls
+under the [Codex hook contract](https://learn.chatgpt.com/docs/hooks#permissionrequest).
 
 ## Requirements
 
-- Omarchy Watch and its desktop bridge must already be installed and running.
-- Codex CLI with plugin and lifecycle-hook support.
-- Input detection requires tool hooks (implementation checked against Codex
-  CLI 0.154.0; permission lifecycle follows the current documented hook contract)
-  and the updated Omarchy Watch bridge/firmware with separate
-  needs-input and finished states.
+- Omarchy Watch's desktop bridge installed and running.
+- Codex CLI with plugin and tool-hook support (checked against CLI 0.154.0).
+- A bridge and firmware that distinguish needs-input from done to display the
+  new state. Older bridges ignore needs-input events, so this plugin can be
+  updated independently.
 
-## Install
+## Install and update
 
-Add the marketplace and install the plugin from your shell:
+Install:
 
 ```bash
 codex plugin marketplace add iamjamesim/omarchy-watch-codex
 codex plugin add omarchy-watch-codex@omarchy-watch-codex
 ```
 
-Start a new Codex CLI session, run `/hooks`, and inspect and trust the
-hooks. No hook runs before you approve its current definition.
-
-If an agent is helping with setup, it must explain the behavior above and ask
-for explicit human approval before adding the marketplace or installing the
-plugin. Mentioning the feature or installing the main Omarchy Watch plugin is
-not consent to install this integration.
-
-## Update
-
-Refresh the marketplace and reinstall the plugin, then start a new Codex CLI
-session. If a hook definition changed, `/hooks` will require a fresh review.
+Update:
 
 ```bash
 codex plugin marketplace upgrade omarchy-watch-codex
 codex plugin add omarchy-watch-codex@omarchy-watch-codex
 ```
 
-## Local development
+Start a new Codex CLI session and use `/hooks` to review and trust the plugin's
+hooks. Updated hook definitions need a fresh review.
 
-To test a checkout instead of the published marketplace, replace the registered
-source (this changes where future plugin updates come from):
+**For agents helping with setup:** explain the behavior and obtain explicit user
+consent before installing this companion. Installing the main watch plugin alone
+is not consent to install Codex hooks.
+
+## Hooks and data
+
+The adapter observes `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionEnd`,
+`PreToolUse`, `PermissionRequest`, and `PostToolUse`. Tool starts record call IDs;
+input requests raise attention; matching tool completions clear it. Ordinary
+tool calls do not send extra watch events.
+
+It uses only event/tool names and session, turn, and call IDs from hook payloads.
+It stores call tracking in private files under
+`$XDG_RUNTIME_DIR/omarchy-watch-codex` (fallback `/run/user/<uid>/omarchy-watch-codex`)
+and sends activity metadata to the bridge's local Unix socket. It does not store
+or forward prompts, command arguments, or answers, and makes no network requests.
+Lifecycle cleanup clears tracked calls; lock files remain until runtime cleanup.
+
+## Remove
+
+```bash
+codex plugin remove omarchy-watch-codex@omarchy-watch-codex
+codex plugin marketplace remove omarchy-watch-codex
+```
+
+Start a new session. Removal leaves watch pairing and other watch features intact;
+there are no entries in `~/.codex/hooks.json` to clean up.
+
+## Development and testing
+
+To use a local checkout, replace the marketplace source:
 
 ```bash
 codex plugin marketplace remove omarchy-watch-codex
@@ -88,51 +90,36 @@ codex plugin marketplace add /absolute/path/to/omarchy-watch-codex
 codex plugin add omarchy-watch-codex@omarchy-watch-codex
 ```
 
-Use a fresh development version suffix in `plugin.json` when reinstalling edited
-code so Codex does not reuse a cached copy. Start a new session and review the
-changed hooks with `/hooks`. In Plan mode, ask Codex to use `request_user_input`:
-the watch should bounce while the question is open, pulse after answering, then
-sway when the turn finishes. This requires the updated bridge and watch firmware;
-installing this companion alone does not update either of them.
+For repeated local installs, use a fresh development version suffix in
+`plugins/omarchy-watch-codex/.codex-plugin/plugin.json` to avoid cached code.
+Keep that suffix uncommitted; release versions use a plain version number.
+Start a fresh session and review changed hooks. To restore published updates,
+remove the local marketplace and repeat the installation commands above.
 
-For permission alerts, review all three tool hooks: PreToolUse records call IDs,
-PermissionRequest raises attention, and PostToolUse resolves tracked calls. See
-[the release checks](docs/permission-alerts.md) for approval, denial, cancellation,
-and concurrent-call testing.
-
-Run adapter tests from this repository:
+Run unit tests from the repository root:
 
 ```bash
-python -m unittest discover -s tests
+python3 -m unittest discover -s tests
 ```
 
-With the watch repository's desktop Python dependencies available, also test
-the real adapter process through a temporary Unix socket into the bridge's event
-handler. This test does not contact Bluetooth or change the running watch state:
+To also run the socket integration test, provide a watch checkout with needs-input
+support and its desktop Python dependencies:
 
 ```bash
-OMARCHY_WATCH_REPO=/absolute/path/to/omarchy-watch python -m unittest discover -s tests
+OMARCHY_WATCH_REPO=/absolute/path/to/omarchy-watch python3 -m unittest discover -s tests
 ```
 
-To restore published updates, remove the local marketplace and repeat the
-marketplace/install commands in **Install**.
+The integration test supplies synthetic hook payloads to the adapter and real
+bridge handler. It does not exercise Codex itself, Bluetooth, or the watch.
 
-## Remove
+Before release, check these in a fresh Codex session with trusted hooks and a
+watch/bridge supporting the new states:
 
-Uninstall the plugin:
-
-```bash
-codex plugin remove omarchy-watch-codex@omarchy-watch-codex
-```
-
-To stop tracking its marketplace as well, run:
-
-```bash
-codex plugin marketplace remove omarchy-watch-codex
-```
-
-This plugin does not write to `~/.codex/hooks.json`, so no manual configuration
-cleanup is required.
+- Approve a harmless command requiring permission: needs-input, then working/done.
+- Deny a request or interrupt: attention clears at turn end or interruption.
+- Answer a blocking Plan-mode question: needs-input, then working.
+- Run ordinary commands: no needs-input alert.
+- With two sessions, resolving one request must not clear another session's request.
 
 ## License
 
