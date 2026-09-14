@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -58,6 +59,10 @@ class FakeSocket:
 
 
 class AdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = tempfile.TemporaryDirectory()
+        self.addCleanup(self.runtime.cleanup)
+
     def run_adapter(self, payload):
         adapter = load_adapter()
         client = FakeSocket()
@@ -65,7 +70,7 @@ class AdapterTests(unittest.TestCase):
         stdout = io.StringIO()
         with (
             mock.patch.object(adapter.socket, "socket", return_value=client),
-            mock.patch.object(adapter, "socket_path", return_value=Path("/run/watch.sock")),
+            mock.patch.object(adapter, "socket_path", return_value=Path(self.runtime.name) / "omarchy-watch.sock"),
             mock.patch.object(adapter.time, "time", return_value=1234),
             mock.patch.object(sys, "stdin", stdin),
             mock.patch.object(sys, "stdout", stdout),
@@ -88,7 +93,7 @@ class AdapterTests(unittest.TestCase):
         )
 
         self.assertEqual(output, "{}\n")
-        self.assertEqual(client.connected_to, "/run/watch.sock")
+        self.assertEqual(client.connected_to, str(Path(self.runtime.name) / "omarchy-watch.sock"))
         self.assertEqual(client.timeout, 0.1)
         self.assertEqual(
             json.loads(client.sent),
@@ -116,7 +121,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(
             set(document["hooks"]),
             {"UserPromptSubmit", "Stop", "Interrupt", "SessionEnd",
-             "PreToolUse", "PostToolUse"},
+             "PreToolUse", "PostToolUse", "PermissionRequest"},
         )
         for groups in document["hooks"].values():
             self.assertEqual(len(groups), 1)
@@ -125,8 +130,7 @@ class AdapterTests(unittest.TestCase):
             self.assertIn("$PLUGIN_ROOT", handlers[0]["command"])
 
         for event in ("PreToolUse", "PostToolUse"):
-            self.assertEqual(document["hooks"][event][0]["matcher"],
-                             "^request_user_input$")
+            self.assertNotIn("matcher", document["hooks"][event][0])
 
     def test_question_and_answer_lifecycle(self):
         for hook, expected in (("PreToolUse", "needs-input"),
@@ -135,7 +139,7 @@ class AdapterTests(unittest.TestCase):
                 client, output = self.run_adapter({
                     "hook_event_name": hook,
                     "session_id": "session-1", "turn_id": "turn-2",
-                    "tool_name": "request_user_input",
+                    "tool_name": "request_user_input", "tool_use_id": "question-1",
                     "tool_input": {"questions": "private question"},
                     "tool_response": {"answers": "private answer"},
                 })
@@ -163,6 +167,91 @@ class AdapterTests(unittest.TestCase):
             client, output = self.run_adapter(payload)
             self.assertEqual(client.sent, b"")
             self.assertEqual(output, "{}\n")
+
+
+class PermissionLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.adapter = load_adapter()
+        self.state = {}
+
+    def event(self, hook, tool="Bash", call="command-1", turn="turn-1"):
+        return self.adapter.transition(self.state, {
+            "hook_event_name": hook, "tool_name": tool,
+            "tool_use_id": call, "turn_id": turn,
+        })
+
+    def test_permission_and_tool_completion(self):
+        for tool in ("Bash", "apply_patch", "mcp__example__tool"):
+            with self.subTest(tool=tool):
+                self.state.clear()
+                self.assertIsNone(self.event("PreToolUse", tool))
+                self.assertEqual(self.event("PermissionRequest", tool, None), "needs-input")
+                self.assertEqual(self.event("PostToolUse", tool), "working")
+
+    def test_unrelated_completion_does_not_clear_permission(self):
+        self.event("PreToolUse")
+        self.event("PreToolUse", "apply_patch", "edit")
+        self.event("PermissionRequest", call=None)
+        self.assertIsNone(self.event("PostToolUse", "apply_patch", "edit"))
+        self.assertEqual(self.event("PostToolUse"), "working")
+
+    def test_overlapping_same_tool_calls_clear_conservatively(self):
+        self.event("PreToolUse", call="one")
+        self.event("PreToolUse", call="two")
+        self.assertEqual(self.event("PermissionRequest", call=None), "needs-input")
+        self.assertIsNone(self.event("PostToolUse", call="one"))
+        self.assertEqual(self.event("PostToolUse", call="two"), "working")
+
+    def test_question_answer_does_not_clear_another_permission(self):
+        self.event("PreToolUse")
+        self.event("PermissionRequest", call=None)
+        self.event("PreToolUse", "request_user_input", "question")
+        self.assertIsNone(self.event("PostToolUse", "request_user_input", "question"))
+        self.assertEqual(self.event("PostToolUse"), "working")
+
+    def test_denial_without_tool_result_clears_at_stop_or_interrupt(self):
+        for hook, expected in (("Stop", "completed"), ("Interrupt", "interrupted"),
+                               ("SessionEnd", "ended"), ("UserPromptSubmit", "working")):
+            with self.subTest(hook=hook):
+                self.state.clear()
+                self.event("PreToolUse")
+                self.event("PermissionRequest", call=None)
+                self.assertEqual(self.event(hook), expected)
+                self.assertFalse(self.state.get("waiting"))
+
+    def test_missing_pre_hook_still_alerts_and_never_guesses_resolution(self):
+        self.assertEqual(self.event("PermissionRequest", call=None), "needs-input")
+        self.assertIsNone(self.event("PostToolUse"))
+        self.assertEqual(self.event("Stop"), "completed")
+
+    def test_old_turn_results_cannot_clear_new_permission(self):
+        self.event("UserPromptSubmit", turn="new")
+        self.event("PreToolUse", turn="new")
+        self.event("PermissionRequest", call=None, turn="new")
+        self.assertIsNone(self.event("PostToolUse", turn="old"))
+        self.assertIsNone(self.event("Stop", turn="old"))
+        self.assertEqual(self.event("PostToolUse", turn="new"), "working")
+
+    def test_repeated_request_does_not_repeat_alert(self):
+        self.event("PreToolUse")
+        self.assertEqual(self.event("PermissionRequest", call=None), "needs-input")
+        self.assertIsNone(self.event("PermissionRequest", call=None))
+
+    def test_permission_output_is_advisory_and_metadata_only(self):
+        harness = AdapterTests()
+        harness.setUp()
+        self.addCleanup(harness.doCleanups)
+        client, output = harness.run_adapter({
+            "hook_event_name": "PermissionRequest", "session_id": "session",
+            "turn_id": "turn", "tool_name": "Bash",
+            "tool_input": {"command": "private command"},
+        })
+        self.assertEqual(output, "{}\n")
+        self.assertEqual(json.loads(client.sent)["event"], "needs-input")
+        files = list(Path(harness.runtime.name).rglob("*.json"))
+        self.assertEqual(len(files), 1)
+        self.assertNotIn("private", files[0].read_text())
+        self.assertEqual(files[0].stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

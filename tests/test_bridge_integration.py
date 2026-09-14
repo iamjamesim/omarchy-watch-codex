@@ -35,12 +35,19 @@ class BridgeIntegrationTests(unittest.TestCase):
                 server.bind(str(Path(directory) / "omarchy-watch.sock"))
                 server.listen()
                 server.settimeout(5)
-                for hook, expected in (
-                    ("UserPromptSubmit", bridge.ACTIVITY_WORKING),
-                    ("PreToolUse", bridge.ACTIVITY_ATTENTION),
-                    ("PostToolUse", bridge.ACTIVITY_WORKING),
-                    ("Stop", bridge.ACTIVITY_FINISHED),
-                    ("Interrupt", bridge.ACTIVITY_NONE),
+                for hook, tool, call, expected in (
+                    ("UserPromptSubmit", "Bash", "cmd", bridge.ACTIVITY_WORKING),
+                    ("PreToolUse", "request_user_input", "question", bridge.ACTIVITY_ATTENTION),
+                    ("PostToolUse", "request_user_input", "question", bridge.ACTIVITY_WORKING),
+                    ("PreToolUse", "Bash", "cmd", None),
+                    ("PermissionRequest", "Bash", None, bridge.ACTIVITY_ATTENTION),
+                    ("PostToolUse", "Bash", "cmd", bridge.ACTIVITY_WORKING),
+                    ("PreToolUse", "Bash", "denied", None),
+                    ("PermissionRequest", "Bash", None, bridge.ACTIVITY_ATTENTION),
+                    ("Stop", "Bash", None, bridge.ACTIVITY_FINISHED),
+                    ("UserPromptSubmit", "Bash", "cancelled", bridge.ACTIVITY_WORKING),
+                    ("PermissionRequest", "Bash", None, bridge.ACTIVITY_ATTENTION),
+                    ("Interrupt", "Bash", None, bridge.ACTIVITY_NONE),
                 ):
                     received = []
                     def receive():
@@ -51,20 +58,23 @@ class BridgeIntegrationTests(unittest.TestCase):
                             connection.sendall(b'{"ok":true}\n')
 
                     listener = threading.Thread(target=receive, daemon=True)
-                    listener.start()
+                    if expected is not None:
+                        listener.start()
                     result = subprocess.run(
                         [sys.executable, str(SCRIPT)],
                         input=json.dumps({
                             "hook_event_name": hook,
-                            "tool_name": "request_user_input",
+                            "tool_name": tool, "tool_use_id": call,
                             "session_id": "local-test", "turn_id": "turn-1",
                         }), text=True, capture_output=True, timeout=5,
                         env={**os.environ, "XDG_RUNTIME_DIR": directory},
                     )
-                    listener.join(timeout=5)
-                    self.assertFalse(listener.is_alive())
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout, "{}\n")
+                    if expected is None:
+                        continue
+                    listener.join(timeout=5)
+                    self.assertFalse(listener.is_alive())
                     self.assertEqual(len(received), 1)
                     # Exercise the real event handler; invoke its completion
                     # debounce callback explicitly instead of waiting 1.5s.
